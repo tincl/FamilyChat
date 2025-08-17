@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>Mini Chat</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 12px; }
+    #wrap { border: 1px solid #ddd; border-radius: 12px; padding: 12px; }
+    #messages { height: 55vh; overflow: auto; padding: 8px; background: rgba(0,0,0,0.04); border-radius: 8px; }
+    .msg { margin: 6px 0; }
+    .me { font-weight: 600; }
+    form { display: grid; grid-template-columns: 1fr auto; gap: 8px; margin-top: 8px; }
+    input, button { padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
+    #meta { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; font-size: 14px; opacity: .8; }
+  </style>
+</head>
+<body>
+  <h1>Mini Chat</h1>
+  <div id="wrap">
+    <div id="meta">
+      <span id="status">연결 중…</span>
+      <label style="margin-left:auto">
+        닉네임:
+        <input id="nick" placeholder="익명" maxlength="20" />
+      </label>
+    </div>
+    <div id="messages" aria-live="polite"></div>
+    <form id="form" autocomplete="off">
+      <input id="input" placeholder="메시지 입력" />
+      <button type="submit">보내기</button>
+    </form>
+  </div>
+
+  <script type="module">
+    // Firebase SDK (바닐라 ES 모듈)
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+    import { initializeAppCheck, ReCaptchaEnterpriseProvider } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged, updateProfile } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+    import { getFirestore, collection, addDoc, serverTimestamp,
+             query, orderBy, limitToLast, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+    // 1) 자신의 firebaseConfig로 교체 - OK
+    const firebaseConfig = {
+      apiKey: "AIzaSyBoYh1VAMsejAAbenbD5ft33q3PnXeNkfI",
+      authDomain: "familychat-96b84.firebaseapp.com",
+      projectId: "familychat-96b84",
+    };
+
+    const app = initializeApp(firebaseConfig);
+
+    // (선택) App Check - 콘솔에서 사이트 키 발급 후 사용
+    // initializeAppCheck(app, {
+    //   provider: new ReCaptchaEnterpriseProvider("YOUR_RECAPTCHA_ENTERPRISE_KEY"),
+    //   isTokenAutoRefreshEnabled: true
+    // });
+
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    const statusEl = document.getElementById('status');
+    const msgsEl   = document.getElementById('messages');
+    const formEl   = document.getElementById('form');
+    const inputEl  = document.getElementById('input');
+    const nickEl   = document.getElementById('nick');
+
+    // 닉네임 로컬 저장
+    const savedNick = localStorage.getItem('nick');
+    if (savedNick) nickEl.value = savedNick;
+    nickEl.addEventListener('change', () => {
+      localStorage.setItem('nick', nickEl.value.trim());
+      if (auth.currentUser && nickEl.value.trim()) {
+        updateProfile(auth.currentUser, { displayName: nickEl.value.trim() }).catch(console.error);
+      }
+    });
+
+    // 2) 익명 로그인
+    await signInAnonymously(auth).catch(console.error);
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        statusEl.textContent = `online: ${user.uid.slice(0,6)}…`;
+        if (nickEl.value.trim()) updateProfile(user, { displayName: nickEl.value.trim() }).catch(()=>{});
+      }
+    });
+
+    // 3) 메시지 실시간 구독 (최근 200개만)
+    const room = "general";
+    const q = query(
+      collection(db, "rooms", room, "messages"),
+      orderBy("createdAt", "asc"),
+      limitToLast(200)
+    );
+
+    onSnapshot(q, (snap) => {
+      msgsEl.innerHTML = "";
+      snap.forEach(doc => {
+        const m = doc.data();
+        const time = m.createdAt?.toDate?.()?.toLocaleTimeString?.() ?? "";
+        const who  = (m.user === auth.currentUser?.uid) ? "me" : "you";
+        const name = (who === "me" ? (auth.currentUser?.displayName || "나")
+                                   : (m.nick || "상대"));
+        const div = document.createElement('div');
+        div.className = 'msg';
+        div.innerHTML = `<span class="${who === 'me' ? 'me' : ''}">${name}</span>: ${escapeHtml(m.text)} <small>(${time})</small>`;
+        msgsEl.appendChild(div);
+      });
+      msgsEl.scrollTop = msgsEl.scrollHeight;
+    });
+
+    // 4) 전송
+    formEl.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const text = inputEl.value.trim();
+      if (!text) return;
+      inputEl.value = "";
+      await addDoc(collection(db, "rooms", room, "messages"), {
+        text,
+        user: auth.currentUser?.uid ?? "anon",
+        nick: nickEl.value.trim() || null,
+        createdAt: serverTimestamp()
+        // expireAt: Timestamp.fromDate(new Date(Date.now() + 1000*60*60*24)), // 24시간 뒤 자동삭제(콘솔에서 TTL 설정 필요)
+      });
+    });
+
+    function escapeHtml(s="") {
+      return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // (선택) PWA 서비스워커 등록
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(()=>{});
+    }
+  </script>
+</body>
+</html>
