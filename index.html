@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <link rel="manifest" href="/manifest.json" />
+  <link rel="manifest" href="manifest.json" />
   <title>Mini Chat</title>
   <style>
     :root { color-scheme: light dark; }
@@ -130,7 +130,7 @@
 
     // (선택) PWA 서비스워커 등록
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch(()=>{});
+      navigator.serviceWorker.register('sw.js').catch(()=>{});
     }
   </script>
 </body>
